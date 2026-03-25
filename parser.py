@@ -1,18 +1,15 @@
 import json
-from models import Product,PriceItem,Media
+from models import Product, PriceItem, Media
 import gzip
 import re
- 
 
 
-def extract_price(price_text):
+def extract_price_from_text(price_text):
     if not price_text:
         return ""
-    
     match=re.search(r'₹[\d,]+', price_text)
-    if match:
-        return match.group(0)
-    return price_text
+    return match.group(0) if match else price_text
+
 
 def parse_file(filename):
     try:
@@ -21,170 +18,153 @@ def parse_file(filename):
 
         response=raw.get('response', {})
         snippets=response.get("snippets", [])
-        
+
         product_name=""
         brand=""
         prices=[]
-        images=[]
-        videos=[]
         product_details={}
-        
-        
+
+        images, videos=[], []
+        seen_images, seen_videos=set(), set()
+
         found_multiple_prices=False
-        
-        for i, snippet in enumerate(snippets):
-            data=snippet.get("data", {})
-            widget_type=snippet.get("widget_type", "")
-            
-            if widget_type == "horizontal_list" and data.get("horizontal_item_list"):
-                item_list=data.get("horizontal_item_list", [])
-                first_item={}
-                for item in item_list:
-                    if item:
-                        first_item=item
-                        break
-                item_data=first_item.get("data", first_item)
-                    
-                if item_data.get("title") and not item_data.get("name"):
-                    found_multiple_prices=True
-                    
-                    if first_item.get("tracking"):
-                        click_map=first_item["tracking"].get("click_map", {})
-                        if click_map:
-                            product_name=click_map.get("name", "")
-                            brand=click_map.get("brand", "")
-                    
-                    for item in item_list:
-                        item_data=item.get("data", item)
-                        
-                        title_text=item_data.get("title", {}).get("text", "") if isinstance(item_data.get("title"), dict) else ""
-                        subtitle_text=item_data.get("subtitle", {}).get("text", "") if isinstance(item_data.get("subtitle"), dict) else ""
-                        subtitle2_text=item_data.get("subtitle2", {}).get("text", "") if isinstance(item_data.get("subtitle2"), dict) else ""
-                        
-                        if title_text and subtitle_text:
-                            try:
-                                if subtitle2_text:
-                                    price_item=PriceItem(
-                                        weight=title_text,
-                                        original=subtitle2_text,
-                                        discounted=subtitle_text,
-                                    )
-                                else:
-                                    price_item=PriceItem(
-                                        weight=title_text,
-                                        original=subtitle_text,
-                                        discounted=subtitle_text,
-                                    )
-                                prices.append(price_item)
-                            except ValueError as e:
-                                print(f"Invalid price data: {e}")
-        
-        
-        if not found_multiple_prices:
-            for i, snippet in enumerate(snippets):
-                data=snippet.get("data", {})
-                widget_type=snippet.get("widget_type", "")
-                
-                if widget_type == "product_atc_strip":
-                    variant_text=data.get("variant", {}).get("text", "") if isinstance(data.get("variant"), dict) else ""
-                    
-                    normal_price_text=data.get("normal_price", {}).get("text", "") if isinstance(data.get("normal_price"), dict) else ""
-                    
-                    mrp_text=data.get("mrp", {}).get("text", "") if isinstance(data.get("mrp"), dict) else ""
-                    
-                    if not product_name:
-                        atc_actions=data.get("atc_actions_v2", {})
-                        if atc_actions:
-                            for action_list in atc_actions.values():
-                                if action_list and action_list[0]:
-                                    action=action_list[0]
-                                    if action.get("add_to_cart"):
-                                        cart_item=action["add_to_cart"].get("cart_item", {})
-                                        if cart_item:
-                                            product_name=cart_item.get("product_name", "")
-                                            brand=cart_item.get("brand", "")
-                                            break
-                    
-                    if not product_name:
-                        rfc_actions=data.get("rfc_actions_v2", {})
-                        if rfc_actions:
-                            for action_list in rfc_actions.values():
-                                if action_list and action_list[0]:
-                                    action=action_list[0]
-                                    if action.get("remove_from_cart"):
-                                        cart_item=action["remove_from_cart"].get("cart_item", {})
-                                        if cart_item:
-                                            product_name=cart_item.get("product_name", "")
-                                            brand=cart_item.get("brand", "")
-                                            break
-                    
-                    if variant_text and normal_price_text:
-                        try:
-                            original_price=extract_price(mrp_text) if mrp_text else normal_price_text
-                            
-                            price_item=PriceItem(
-                                weight=variant_text,
-                                original=original_price,
-                                discounted=normal_price_text,
-                            )
-                            prices.append(price_item)
-                        except ValueError as e:
-                            print(f"Invalid price data: {e}")
-                    
-                    break  
-        
+
         for snippet in snippets:
-            data=snippet.get("data", {})
-            
-            if data.get("itemList"):
-                item_list=data.get("itemList", [])
-                for item in item_list:
-                    media_content=item.get("data", {}).get("media_content", {})
-                    if media_content.get("media_type") == "image":
-                        img_url=media_content.get("image", {}).get("url", "")
-                        if img_url and img_url not in images:
-                            images.append(img_url)
+            snippet=snippet or {}  
+
+            data=snippet.get("data") or {}
+            widget_type=snippet.get("widget_type") or ""
+
+            # multiple prices
+            if widget_type == "horizontal_list":
+                item_list=data.get("horizontal_item_list") or []
+
+                if item_list:
+                    first_item=item_list[0] or {}
+                    item_data=first_item.get("data") or first_item or {}
+
+                    if item_data.get("title") and not item_data.get("name"):
+                        found_multiple_prices=True
+
+                        click_map=(first_item.get("tracking") or {}).get("click_map") or {}
+                        product_name=click_map.get("name", "")
+                        brand=click_map.get("brand", "")
+
+                        for idx, item in enumerate(item_list):
+                            item=item or {}
+                            item_data=item.get("data") or item or {}
+
+                            title=item_data.get("title") or {}
+                            subtitle=item_data.get("subtitle") or {}
+                            subtitle2=item_data.get("subtitle2") or {}
+
+                            title_text=title.get("text", "") if isinstance(title, dict) else ""
+                            subtitle_text=subtitle.get("text", "") if isinstance(subtitle, dict) else ""
+                            subtitle2_text=subtitle2.get("text", "") if isinstance(subtitle2, dict) else ""
+
+                            if title_text and subtitle_text:
+                                try:
+                                    prices.append(PriceItem(
+                                        weight=title_text,
+                                        original=subtitle2_text or subtitle_text,
+                                        discounted=subtitle_text,
+                                        is_selected=(idx == 0)
+                                    ))
+                                except ValueError as e:
+                                    print(f"Invalid price data: {e}")
+
+                        continue
                     
-                    elif media_content.get("media_type") == "video":
-                        video_url=media_content.get("video", {}).get("url", "")
-                        if video_url and video_url not in videos:
-                            videos.append(video_url)
-        
-        try:
-            snippet_list_updater_data=response.get("snippet_list_updater_data", {})
-            expand_attributes=snippet_list_updater_data.get("expand_attributes", {})
-            payload=expand_attributes.get("payload", {})
-            snippets_to_add=payload.get("snippets_to_add", [])
+            #  single price
+            elif not found_multiple_prices and widget_type == "product_atc_strip":
             
-            for snippet in snippets_to_add:
-                snippet_data=snippet.get("data", {})
-                attr_name=snippet_data.get("title", {}).get("text", "").strip()
-                attr_value=snippet_data.get("subtitle", {}).get("text", "").strip()
-                
-                if attr_name and attr_value:
-                    product_details[attr_name]=attr_value
+                variant=data.get("variant") or {}
+                normal_price=data.get("normal_price") or {}
+                mrp=data.get("mrp") or {}
+
+                variant_text=variant.get("text", "") if isinstance(variant, dict) else ""
+                normal_price_text=normal_price.get("text", "") if isinstance(normal_price, dict) else ""
+                mrp_text=mrp.get("text", "") if isinstance(mrp, dict) else ""
+
+                if not product_name:
+                    for action_group in ("atc_actions_v2", "rfc_actions_v2"):
+                        for action_list in (data.get(action_group) or {}).values():
+                            if action_list:
+                                action=action_list[0] or {}
+                                cart=action.get("add_to_cart") or action.get("remove_from_cart")
+                                if cart:
+                                    cart_item=cart.get("cart_item") or {}
+                                    product_name=cart_item.get("product_name", "")
+                                    brand=cart_item.get("brand", "")
+                                    break
+                                
+                if variant_text and normal_price_text:
+                    try:
+                        original_price=extract_price_from_text(mrp_text) if mrp_text else normal_price_text
+
+                        prices.append(PriceItem(
+                            weight=variant_text,
+                            original=original_price,
+                            discounted=normal_price_text,
+                            is_selected=True
+                        ))
+                    except ValueError as e:
+                        print(f"Invalid price data: {e}")
+
+                break
+            
+            # media
+            for item in data.get("itemList") or []:
+                item=item or {}
+                media=(item.get("data") or {}).get("media_content") or {}
+
+                media_type=media.get("media_type")
+
+                if media_type == "image":
+                    url=(media.get("image") or {}).get("url")
+                    if url and url not in seen_images:
+                        seen_images.add(url)
+                        images.append(url)
+
+                elif media_type == "video":
+                    url=(media.get("video") or {}).get("url")
+                    if url and url not in seen_videos:
+                        seen_videos.add(url)
+                        videos.append(url)
+
+        # product deatils
+        try:
+            payload=(
+                response.get("snippet_list_updater_data", {})
+                .get("expand_attributes", {})
+                .get("payload", {})
+            )
+
+            for snippet in payload.get("snippets_to_add", []):
+                data=snippet.get("data", {})
+                key=data.get("title", {}).get("text", "").strip()
+                value=data.get("subtitle", {}).get("text", "").strip()
+
+                if key and value:
+                    product_details[key]=value
+
         except Exception as e:
             print(f"Could not extract product details: {e}")
-        
-        media=Media(
-            image=images,
-            video=videos
-        )
-    
+
+        media=Media(image=images, video=videos)
+
         if product_name and prices:
-            
-            final_data=Product(
+            return Product(
                 product_name=product_name,
                 brand=brand,
                 price=prices,
                 media=media,
                 product_details=product_details
             )
-            return final_data
-        else:
-            print("Error: Could not extract product name or prices")
-            return None
-            
+
+        print("Error: Could not extract product name or prices")
+        return None
+
     except Exception as e:
         print(f"Error parsing JSON: {e}")
         return None

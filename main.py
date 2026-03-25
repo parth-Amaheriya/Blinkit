@@ -1,96 +1,161 @@
+# import os
+# import time
+# from concurrent.futures import ThreadPoolExecutor, as_completed
+# from parser import parse_file
+# from db import (
+#     FOLDER_PATH,
+#     get_connection,
+#     get_connection_thread,
+#     create_table,
+#     create_database,
+#     insert_multiple_data
+# )
+
+# BATCH_SIZE = 2000
+# MAX_WORKERS = 8
+
+
+# def insert_batch(batch):
+#     conn = get_connection_thread()
+#     cursor = conn.cursor()
+#     insert_multiple_data(cursor, batch)
+#     conn.commit()
+#     cursor.close()
+#     conn.close()
+
+
+# def main():
+#     start_time = time.time()
+
+#     conn = get_connection()
+#     cursor = conn.cursor()
+#     create_database(cursor)
+#     create_table(cursor)
+#     conn.commit()
+#     cursor.close()
+#     conn.close()
+
+#     batch = []
+#     futures = []
+
+#     # count=0
+#     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        
+#         for filename in os.listdir(FOLDER_PATH):
+#             # if count>=2000:
+#             #     break
+#             # count+=1
+#             file_path = os.path.join(FOLDER_PATH, filename)
+
+#             future = executor.submit(parse_file, file_path)
+#             futures.append(future)
+
+#             if len(futures) >= MAX_WORKERS * 2:
+#                 for done in as_completed(futures):
+#                     try:
+#                         result = done.result()
+#                         if result:
+#                             batch.append(result)
+
+#                         if len(batch) >= BATCH_SIZE:
+#                             executor.submit(insert_batch, batch.copy())
+#                             batch.clear()
+
+#                     except Exception as e:
+#                         print(f"Error: {e}")
+
+#                 futures.clear() 
+
+#         for done in as_completed(futures):
+#             try:
+#                 result = done.result()
+#                 if result:
+#                     batch.append(result)
+
+#                 if len(batch) >= BATCH_SIZE:
+#                     executor.submit(insert_batch, batch.copy())
+#                     batch.clear()
+
+#             except Exception as e:
+#                 print(f"Error: {e}")
+
+#         if batch:
+#             executor.submit(insert_batch, batch.copy())
+
+#     end_time = time.time()
+#     print(f"Total runtime: {end_time - start_time} seconds")
+
+
+# if __name__ == "__main__":
+#     main()
+
+
 import os
 import time
-import threading
 from parser import parse_file
-from db import (
-    FOLDER_PATH,
-    get_connection_thread,
-    get_connection,
-    create_table,
-    create_database,
-    insert_multiple_data
-)
+from db import FOLDER_PATH, get_connection_thread,get_connection, create_table, create_database, insert_multiple_data
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-BATCH_SIZE=2000
-MAX_WORKERS=5
+BATCH_SIZE = 2000
+MAX_WORKERS =8
 
-batch=[]
-batch_lock=threading.Lock()
-db_threads=[]
-
-def insert_batch(batch_to_insert):
-    conn=get_connection_thread()
-    cursor=conn.cursor()
-    insert_multiple_data(cursor, batch_to_insert)
+def insert_batch(batch):
+    conn = get_connection_thread()
+    cursor = conn.cursor()
+    insert_multiple_data(cursor, batch)
     conn.commit()
     cursor.close()
     conn.close()
 
 def process_file(file_path):
     try:
-        result=parse_file(file_path)
-        if result:
-            trigger_db_insert(result)
+        return parse_file(file_path)
     except Exception as e:
         print(f"Error parsing {file_path}: {e}")
-
-def trigger_db_insert(parsed_item):
-    global batch, db_threads
-    with batch_lock:
-        batch.append(parsed_item)
-        if len(batch) >= BATCH_SIZE:
-            batch_copy=batch.copy()
-            batch.clear()
-            t=threading.Thread(target=insert_batch, args=(batch_copy,))
-            t.start()
-            db_threads.append(t)
-
-            if len(db_threads) >= MAX_WORKERS:
-                for th in db_threads:
-                    th.join()
-                db_threads.clear()
+        return None
 
 def main():
-    start_time=time.time()
-
-    conn=get_connection()
-    cursor=conn.cursor()
+    start_time = time.time()
+    conn = get_connection()
+    cursor = conn.cursor()
     create_database(cursor)
     create_table(cursor)
     conn.commit()
     cursor.close()
     conn.close()
+    
+    batch = []
+    db_futures = []
+    count=0
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as parser_executor:
+        data = {}
+        for f in os.listdir(FOLDER_PATH):
+            file_path = os.path.join(FOLDER_PATH, f)
+            future = parser_executor.submit(process_file, file_path)
+            data[future] = f
+            
+            count+=1
+            if count>2000:
+                break
 
-    parser_threads=[]
-    for f in os.listdir(FOLDER_PATH):
-        print("Processing :- ",f)
-        file_path=os.path.join(FOLDER_PATH, f)
-        t=threading.Thread(target=process_file, args=(file_path,))
-        t.start()
-        parser_threads.append(t)
 
-        if len(parser_threads) >= MAX_WORKERS:
-            for th in parser_threads:
-                th.join()
-            parser_threads.clear()
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as db_executor:
+            for future in as_completed(data):
+                result = future.result()
+                if result:
+                    batch.append(result)
+                if len(batch) >= BATCH_SIZE:
+                    db_futures.append(db_executor.submit(insert_batch, batch.copy()))
+                    batch.clear()
 
-    for th in parser_threads:
-        th.join()
+            if batch:
+                db_futures.append(db_executor.submit(insert_batch, batch.copy()))
 
-    with batch_lock:
-        if batch:
-            t=threading.Thread(target=insert_batch, args=(batch.copy(),))
-            t.start()
-            db_threads.append(t)
-            batch.clear()
+            for db_future in as_completed(db_futures):
+                db_future.result()
 
-    for th in db_threads:
-        th.join()
-
-    end_time=time.time()
+    end_time= time.time()
     print(f"Total runtime: {end_time - start_time} seconds")
-
 
 if __name__ == "__main__":
     main()
-
