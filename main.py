@@ -1,99 +1,8 @@
-# import os
-# import time
-# from concurrent.futures import ThreadPoolExecutor, as_completed
-# from parser import parse_file
-# from db import (
-#     FOLDER_PATH,
-#     get_connection,
-#     get_connection_thread,
-#     create_table,
-#     create_database,
-#     insert_multiple_data
-# )
-
-# BATCH_SIZE = 2000
-# MAX_WORKERS = 8
-
-
-# def insert_batch(batch):
-#     conn = get_connection_thread()
-#     cursor = conn.cursor()
-#     insert_multiple_data(cursor, batch)
-#     conn.commit()
-#     cursor.close()
-#     conn.close()
-
-
-# def main():
-#     start_time = time.time()
-
-#     conn = get_connection()
-#     cursor = conn.cursor()
-#     create_database(cursor)
-#     create_table(cursor)
-#     conn.commit()
-#     cursor.close()
-#     conn.close()
-
-#     batch = []
-#     futures = []
-
-#     # count=0
-#     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        
-#         for filename in os.listdir(FOLDER_PATH):
-#             # if count>=2000:
-#             #     break
-#             # count+=1
-#             file_path = os.path.join(FOLDER_PATH, filename)
-
-#             future = executor.submit(parse_file, file_path)
-#             futures.append(future)
-
-#             if len(futures) >= MAX_WORKERS * 2:
-#                 for done in as_completed(futures):
-#                     try:
-#                         result = done.result()
-#                         if result:
-#                             batch.append(result)
-
-#                         if len(batch) >= BATCH_SIZE:
-#                             executor.submit(insert_batch, batch.copy())
-#                             batch.clear()
-
-#                     except Exception as e:
-#                         print(f"Error: {e}")
-
-#                 futures.clear() 
-
-#         for done in as_completed(futures):
-#             try:
-#                 result = done.result()
-#                 if result:
-#                     batch.append(result)
-
-#                 if len(batch) >= BATCH_SIZE:
-#                     executor.submit(insert_batch, batch.copy())
-#                     batch.clear()
-
-#             except Exception as e:
-#                 print(f"Error: {e}")
-
-#         if batch:
-#             executor.submit(insert_batch, batch.copy())
-
-#     end_time = time.time()
-#     print(f"Total runtime: {end_time - start_time} seconds")
-
-
-# if __name__ == "__main__":
-#     main()
-
 
 import os
 import time
 from parser import parse_file
-from db import FOLDER_PATH, get_connection_thread,get_connection, create_table, create_database, insert_multiple_data
+from db2 import FOLDER_PATH, get_connection_thread,get_connection, create_table, create_database, insert_multiple_data
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BATCH_SIZE = 2000
@@ -135,9 +44,8 @@ def main():
             data[future] = f
             
             count+=1
-            if count>2000:
+            if count>=2000:
                 break
-
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as db_executor:
             for future in as_completed(data):
@@ -150,9 +58,8 @@ def main():
 
             if batch:
                 db_futures.append(db_executor.submit(insert_batch, batch.copy()))
-
-            for db_future in as_completed(db_futures):
-                db_future.result()
+        for db_future in as_completed(db_futures):
+            db_future.result()  
 
     end_time= time.time()
     print(f"Total runtime: {end_time - start_time} seconds")

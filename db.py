@@ -41,7 +41,7 @@ def create_table(cursor):
 
 def insert_multiple_data(cursor, product_list):
     if not product_list:
-        return
+        return 0
 
     query = """
     INSERT INTO products (
@@ -65,3 +65,4 @@ def insert_multiple_data(cursor, product_list):
         ))
 
     cursor.executemany(query, rows)
+    return cursor.rowcount

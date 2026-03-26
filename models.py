@@ -1,7 +1,4 @@
 from pydantic import BaseModel, field_validator
-import json
-import re
-
 
 class PriceItem(BaseModel):
     weight: str | None
@@ -18,13 +15,10 @@ class PriceItem(BaseModel):
             return float(v)
         return float(v)
 
-
 class Media(BaseModel):
     image: list[str]
     video: list[str] 
     
-
-
 class Product(BaseModel):
     
     product_name: str
